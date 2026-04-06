@@ -207,7 +207,8 @@ def apply_lee_ready_logic(symbol):
         df = pd.DataFrame(trades)
         df['price_change'] = df['price'].diff()
         df['direction'] = np.where(df['price_change'] > 0, 1, np.where(df['price_change'] < 0, -1, 0))
-        df['direction'] = df['direction'].replace(0, method='ffill')
+        # 🚀 修正 Pandas 報錯：先將 0 轉為 NaN，再向前填充，最後將開頭無法填充的填回 0
+        df['direction'] = df['direction'].replace(0, np.nan).ffill().fillna(0)
 
         # 🚀 新增：大單加權 (大於平均量 2 倍的單，權重 x 2)
         avg_vol = df['amount'].mean()
