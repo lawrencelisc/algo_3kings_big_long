@@ -166,6 +166,13 @@ def execute_live_long(symbol, net_flow, current_price, is_strong, atr, is_volati
         tp_p = float(exchange.price_to_precision(symbol, actual_price + (s_cfg['tp_atr_mult'] * atr)))
         sl_p = float(exchange.price_to_precision(symbol, actual_price - (s_cfg['sl_atr_mult'] * atr)))
 
+        # 🚀 新增：手續費安全門檻防護 (Profit Margin > 0.3%)
+        expected_profit_margin = (tp_p - actual_price) / actual_price
+        if expected_profit_margin < 0.003:
+            print(f"🟡 放棄進場 [{symbol}]: 利潤空間 {expected_profit_margin:.4f} 太細，連手續費都唔夠俾！")
+            cancel_all_v5(symbol)
+            return  # 直接中斷，唔落單
+
         try:
             exchange.private_post_v5_position_trading_stop({
                 'category': 'linear', 'symbol': exchange.market_id(symbol),

@@ -74,80 +74,173 @@ def get_btc_regime():
         return 0
 
 
+# def scouting_top_coins(n=5):
+#     try:
+#         tickers = exchange.fetch_tickers()
+#         data = []
+#         for s, t in tickers.items():
+#             if s.endswith(':USDT') and s not in BLACKLIST and t['percentage'] is not None:
+#                 data.append({'symbol': s, 'volume': t['quoteVolume'], 'change': t['percentage'], 'ask': t.get('ask'),
+#                              'bid': t.get('bid')})
+#
+#         df = pd.DataFrame(data)
+#         if df.empty: return []
+#
+#         # 🚀 關鍵：動態計算成交量的 80% 分位數
+#         # 這代表只有成交量排名前 20% 的幣種能通過，無論市場熱還是冷
+#         dynamic_min_volume = df['volume'].quantile(0.8)
+#
+#         # 過濾 Spread 與成交量
+#         df = df[(df['volume'] >= dynamic_min_volume)]
+#         df['spread'] = (df['ask'] - df['bid']) / df['bid']
+#         df = df[df['spread'] < 0.0010]
+#
+#         # 從這批實力幣中選最強的 n 隻
+#         return df.sort_values('volume', ascending=False).head(50).sort_values('change', ascending=False).head(n)[
+#             'symbol'].tolist()
+#     except Exception as e:
+#         print(f"⚠️ Dynamic Scouting Error: {e}")
+#         return []
+#
+#
+# 🛠️ 舊代碼保留 (請將您原本的 def scouting_top_coins 或是 scouting_weak_coins 全部選起來，按 Ctrl+/ 變成註解)
+# def scouting_top_coins(n=5):
+#     ... (您原本的代碼) ...
 def scouting_top_coins(n=5):
+    """海選強勢幣 (過濾 Spread)"""
     try:
         tickers = exchange.fetch_tickers()
         data = []
         for s, t in tickers.items():
             if s.endswith(':USDT') and s not in BLACKLIST and t['percentage'] is not None:
-                data.append({'symbol': s, 'volume': t['quoteVolume'], 'change': t['percentage'], 'ask': t.get('ask'),
-                             'bid': t.get('bid')})
+                ask = t.get('ask')
+                bid = t.get('bid')
+                if ask and bid and bid > 0:
+                    spread = (ask - bid) / bid
+                    # if spread < 0.0015: # 🛠️ 舊代碼保留
+                    if spread < 0.0010:  # 🚀 新增：大幣專用，極嚴格 Spread 門檻
+                        data.append({'symbol': s, 'volume': t['quoteVolume'], 'change': t['percentage']})
 
         df = pd.DataFrame(data)
         if df.empty: return []
 
-        # 🚀 關鍵：動態計算成交量的 80% 分位數
-        # 這代表只有成交量排名前 20% 的幣種能通過，無論市場熱還是冷
+        # return df.sort_values('volume', ascending=False).head(20).sort_values('change', ascending=False).head(n)['symbol'].tolist() # 🛠️ 舊代碼保留
+
+        # 🚀 新增：動態成交量過濾 (全市場 Top 20% 資金)，確保入選嘅一定係大幣
         dynamic_min_volume = df['volume'].quantile(0.8)
+        df_filtered = df[df['volume'] >= dynamic_min_volume]
+        return df_filtered.sort_values('change', ascending=False).head(n)['symbol'].tolist()
 
-        # 過濾 Spread 與成交量
-        df = df[(df['volume'] >= dynamic_min_volume)]
-        df['spread'] = (df['ask'] - df['bid']) / df['bid']
-        df = df[df['spread'] < 0.0010]
-
-        # 從這批實力幣中選最強的 n 隻
-        return df.sort_values('volume', ascending=False).head(50).sort_values('change', ascending=False).head(n)[
-            'symbol'].tolist()
     except Exception as e:
-        print(f"⚠️ Dynamic Scouting Error: {e}")
+        print(f"⚠️ Scouting Error: {e}")
         return []
 
 
-# ✅ 新增代碼：修正回傳值，增加 z_score 給 main.py 用嚟計 Risk
-def apply_lee_ready_logic(symbol):
-    """Lee-Ready 資金流邏輯 + 訂單簿失衡度 (Imbalance) + P95濾網 [終極做多版]"""
-    try:
-        ob = exchange.fetch_order_book(symbol, limit=20)
-        midpoint = (ob['bids'][0][0] + ob['asks'][0][0]) / 2
+# # ✅ 新增代碼：修正回傳值，增加 z_score 給 main.py 用嚟計 Risk
+# def apply_lee_ready_logic(symbol):
+#     """Lee-Ready 資金流邏輯 + 訂單簿失衡度 (Imbalance) + P95濾網 [終極做多版]"""
+#     try:
+#         ob = exchange.fetch_order_book(symbol, limit=20)
+#         midpoint = (ob['bids'][0][0] + ob['asks'][0][0]) / 2
+#
+#         bid_vol = sum([b[1] for b in ob['bids']])
+#         ask_vol = sum([a[1] for a in ob['asks']])
+#         imbalance = (bid_vol - ask_vol) / (bid_vol + ask_vol) if (bid_vol + ask_vol) > 0 else 0
+#         imbalance = max(-1, min(1, imbalance))
+#
+#         trades = exchange.fetch_trades(symbol, limit=500)
+#         df = pd.DataFrame(trades, columns=['price', 'amount', 'timestamp'])
+#         df['dir'] = np.where(df['price'] > midpoint, 1, np.where(df['price'] < midpoint, -1, 0))
+#         df['tick'] = df['price'].diff().apply(np.sign).replace(0, np.nan).ffill().fillna(0)
+#         df['final'] = np.where(df['dir'] != 0, df['dir'], df['tick'])
+#
+#         df['usd_val'] = df['amount'] * df['price']
+#         p95 = df['usd_val'].quantile(0.95)
+#         df['usd_val_clipped'] = df['usd_val'].clip(upper=p95)
+#
+#         df['weighted_flow'] = df['final'] * df['usd_val_clipped']
+#         net_flow = df['weighted_flow'].sum()
+#         flow_std = df['weighted_flow'].std()
+#
+#         if pd.isna(flow_std) or flow_std <= 0:
+#             z_score = 0
+#         else:
+#             z_score = net_flow / flow_std
+#             z_score = np.clip(z_score, -10, 10)
+#
+#         is_strong = (z_score > NET_FLOW_SIGMA) and (imbalance > MIN_IMBALANCE_RATIO)
+#
+#         if is_strong:
+#             print(f"📈 {symbol} Long Validated | Z-Score: {z_score:.2f} | Imbalance: {imbalance:.2f} | P95 Cap: {p95:.0f}")
+#         elif z_score > NET_FLOW_SIGMA:
+#             print(f"⚠️ {symbol} Fake-Pump Prevented | Z-Score: {z_score:.2f} but Imbalance is {imbalance:.2f} (Sell Wall in the way)")
+#
+#         # 🚀 修正：回傳值增加 z_score 以配合 main.py 需求 (4 個變數)
+#         return net_flow, df['price'].iloc[-1], is_strong, z_score
+#
+#     except Exception as e:
+#         print(f"❌ 錯誤 [{symbol}] Lee-Ready: {e}")
+#         # 🚀 修正：錯誤時也要回傳 4 個值，防止 ValueError
+#         return 0, 0, False, 0
+#
+#
+# 🛠️ 舊代碼保留 (請將您原本的 def apply_lee_ready_logic 全部變成註解)
+# def apply_lee_ready_logic(symbol):
+#     ... (您原本的代碼) ...
 
+# 🛠️ 將您 strategy.py 裡面原本的 apply_lee_ready_logic 內容全部加上 # 註解保留，然後貼上以下全新邏輯
+
+def apply_lee_ready_logic(symbol):
+    """Lee-Ready 狙擊手版本 (實裝 ABC 改進)"""
+    try:
+        # 🚀 改進 C：結合訂單簿 (Orderbook) 失衡預判
+        ob = exchange.fetch_order_book(symbol, limit=20)
         bid_vol = sum([b[1] for b in ob['bids']])
         ask_vol = sum([a[1] for a in ob['asks']])
         imbalance = (bid_vol - ask_vol) / (bid_vol + ask_vol) if (bid_vol + ask_vol) > 0 else 0
         imbalance = max(-1, min(1, imbalance))
 
-        trades = exchange.fetch_trades(symbol, limit=500)
-        df = pd.DataFrame(trades, columns=['price', 'amount', 'timestamp'])
-        df['dir'] = np.where(df['price'] > midpoint, 1, np.where(df['price'] < midpoint, -1, 0))
-        df['tick'] = df['price'].diff().apply(np.sign).replace(0, np.nan).ffill().fillna(0)
-        df['final'] = np.where(df['dir'] != 0, df['dir'], df['tick'])
+        # 🚀 改進 B：拉取更長視窗 (200筆) 進行長短窗對比
+        trades = exchange.fetch_trades(symbol, limit=200)
+        if not trades: return 0, 0, False, 0
 
-        df['usd_val'] = df['amount'] * df['price']
-        p95 = df['usd_val'].quantile(0.95)
-        df['usd_val_clipped'] = df['usd_val'].clip(upper=p95)
+        df = pd.DataFrame(trades)
+        df['price_change'] = df['price'].diff()
+        df['direction'] = np.where(df['price_change'] > 0, 1, np.where(df['price_change'] < 0, -1, 0))
+        df['direction'] = df['direction'].replace(0, method='ffill')
 
-        df['weighted_flow'] = df['final'] * df['usd_val_clipped']
-        net_flow = df['weighted_flow'].sum()
-        flow_std = df['weighted_flow'].std()
+        # 🚀 新增：大單加權 (大於平均量 2 倍的單，權重 x 2)
+        avg_vol = df['amount'].mean()
+        df['weight'] = np.where(df['amount'] > avg_vol * 2, 2.0, 1.0)
+        df['net_flow'] = df['direction'] * df['amount'] * df['price'] * df['weight']
 
-        if pd.isna(flow_std) or flow_std <= 0:
-            z_score = 0
-        else:
-            z_score = net_flow / flow_std
-            z_score = np.clip(z_score, -10, 10)
+        # 計算長短窗 Net Flow
+        short_window_flow = df['net_flow'].tail(50).sum()
 
-        is_strong = (z_score > NET_FLOW_SIGMA) and (imbalance > MIN_IMBALANCE_RATIO)
+        # 🚀 改進 A：加速度 (Acceleration) - 對比最近 25 筆與前 25 筆
+        recent_25_flow = df['net_flow'].tail(25).sum()
+        prev_25_flow = df['net_flow'].iloc[-50:-25].sum()
+        acceleration = recent_25_flow - prev_25_flow
 
-        if is_strong:
-            print(f"📈 {symbol} Long Validated | Z-Score: {z_score:.2f} | Imbalance: {imbalance:.2f} | P95 Cap: {p95:.0f}")
-        elif z_score > NET_FLOW_SIGMA:
-            print(f"⚠️ {symbol} Fake-Pump Prevented | Z-Score: {z_score:.2f} but Imbalance is {imbalance:.2f} (Sell Wall in the way)")
+        is_strong = False
+        z_score = 0
+        if df['net_flow'].std() > 0:
+            z_score = short_window_flow / df['net_flow'].std()
 
-        # 🚀 修正：回傳值增加 z_score 以配合 main.py 需求 (4 個變數)
-        return net_flow, df['price'].iloc[-1], is_strong, z_score
+        # 🎯 條件 1 [狙擊模式]：短窗有正向流入 + 加速度向上爆發 + 買盤失衡厚度 > 15% (搶跑進場)
+        if (short_window_flow > 0) and (acceleration > 0) and (imbalance > 0.15):
+            is_strong = True
+            print(f"🔥 {symbol} Sniper Entry! Accel: {acceleration:.0f} | Imbalance: {imbalance:.2f}")
+
+        # 🎯 條件 2 [穩健模式]：傳統 Z-Score 突破 (適應大型幣，門檻設 1.2)
+        elif z_score > 1.2:
+            is_strong = True
+            print(f"📈 {symbol} Z-Score Validated: {z_score:.2f}")
+
+        return short_window_flow, df['price'].iloc[-1], is_strong, z_score
 
     except Exception as e:
-        print(f"❌ 錯誤 [{symbol}] Lee-Ready: {e}")
-        # 🚀 修正：錯誤時也要回傳 4 個值，防止 ValueError
+        print(f"❌ 錯誤 [{symbol}] LR Sniper: {e}")
         return 0, 0, False, 0
 
 

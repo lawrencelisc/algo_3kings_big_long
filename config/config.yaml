@@ -17,16 +17,16 @@ TRADING:
   risk_per_trade: 0.03        # 每筆交易風險比例 (1%)
   min_notional: 5.0           # Bybit 最小名義價值 (防止 Order too small)
   scouting_interval: 120      # 海選掃描頻率 (秒)
-  pos_check_interval: 10      # 持倉巡邏與 Trail SL 更新頻率 (秒)
+  pos_check_interval: 5      # 持倉巡邏與 Trail SL 更新頻率 (秒) 10 改為 5 (rev. 2026-04-06)
 
 # ==========================================
 # [STAGE 2] 策略核心參數 (STRATEGY)
 # 供參謀部計算指標使用
 # ==========================================
 STRATEGY:
-  net_flow_sigma: 1.0         # Lee-Ready 資金流偏離度門檻
-  tp_atr_mult: 2.8            # 止盈 ATR 倍數
-  sl_atr_mult: 2.0            # 初始止損 ATR 倍數
+  net_flow_sigma: 1.5         # Lee-Ready 資金流偏離度門檻 1.0 改為 1.5 (rev. 2026-04-06)
+  tp_atr_mult:  3.0           # 止盈 ATR 倍數 2.8 改為 3.0 (rev. 2026-04-06)
+  sl_atr_mult: 1.5            # 初始止損 ATR 倍數 2.0 改為 1.5 (rev. 2026-04-06)
   trail_atr_mult: 1.0         # 追蹤止損 ATR 步進倍數
   btc_dev_threshold: 0.0025   # BTC 偏離 SMA20 啟動門檻 (0.25%)
 
