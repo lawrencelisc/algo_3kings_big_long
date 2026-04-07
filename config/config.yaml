@@ -17,7 +17,7 @@ TRADING:
   risk_per_trade: 0.03        # 每筆交易風險比例 (1%)
   min_notional: 5.0           # Bybit 最小名義價值 (防止 Order too small)
   scouting_interval: 120      # 海選掃描頻率 (秒)
-  pos_check_interval: 5      # 持倉巡邏與 Trail SL 更新頻率 (秒) 10 改為 5 (rev. 2026-04-06)
+  pos_check_interval: 10      # 持倉巡邏與 Trail SL 更新頻率 (秒) 10
 
 # ==========================================
 # [STAGE 2] 策略核心參數 (STRATEGY)
