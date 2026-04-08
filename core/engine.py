@@ -155,7 +155,6 @@ def execute_live_long(symbol, net_flow, current_price, is_strong, atr, is_volati
                     break
 
         if actual_amount == 0:
-
             # 🚀 修正：強化 IOC 未成交防禦，執行核彈撤單
             print(f"⏩ {symbol} IOC 未成交或數量為 0，執行核彈撤單並退出。")
             cancel_all_v5(symbol)
@@ -182,10 +181,18 @@ def execute_live_long(symbol, net_flow, current_price, is_strong, atr, is_volati
         except Exception as e:
             logger.warning(f"⚠️ {symbol} TP/SL setup exception (local tracking unaffected): {e}")
 
+        # ❌ 舊代碼保留
+        # positions[symbol] = {
+        #     'amount': actual_amount, 'entry_price': actual_price, 'tp_price': tp_p,
+        #     'sl_price': sl_p, 'is_breakeven': False, 'atr': atr
+        # }
+
+        # 🚀 修正/新增 1：加入 'max_pnl_pct' 初始化，用於紀錄利潤最高點
         positions[symbol] = {
             'amount': actual_amount, 'entry_price': actual_price, 'tp_price': tp_p,
-            'sl_price': sl_p, 'is_breakeven': False, 'atr': atr
+            'sl_price': sl_p, 'is_breakeven': False, 'atr': atr, 'max_pnl_pct': 0.0
         }
+
         cooldown_tracker[symbol] = time.time() + rm_cfg['cooldown_period']
 
         log_to_csv({
@@ -200,6 +207,8 @@ def execute_live_long(symbol, net_flow, current_price, is_strong, atr, is_volati
 
 
 def manage_long_positions():
+    # 🚀 修正/新增 4：引入全局設定 (Config) 讀取，獲取鎖利參數
+    t_cfg = config['TRADING']
     s_cfg = config['STRATEGY']
     is_critical_zone = False
 
@@ -235,6 +244,11 @@ def manage_long_positions():
             pnl_pct = (curr_p - pos['entry_price']) / pos['entry_price']
             sl_updated = False
 
+            # 🚀 修正/新增 1：追蹤最高利潤點，用於鎖利機制
+            if 'max_pnl_pct' not in pos:
+                pos['max_pnl_pct'] = pnl_pct
+            pos['max_pnl_pct'] = max(pos['max_pnl_pct'], pnl_pct)
+
             dist_to_tp = abs(pos['tp_price'] - curr_p) / curr_p
             dist_to_sl = abs(curr_p - pos['sl_price']) / curr_p
             if dist_to_tp < 0.0015 or dist_to_sl < 0.0015:
@@ -247,7 +261,11 @@ def manage_long_positions():
                 trail_sl = curr_p - (s_cfg['trail_atr_mult'] * pos['atr'])
                 # 計算：只有當新的 SL 比舊的 SL 高出至少 0.2% 時，才發送 API 更新到交易所
                 if trail_sl > pos['sl_price']:
-                    if (trail_sl - pos['sl_price']) / pos['sl_price'] > 0.002:
+                    # ❌ 舊代碼保留
+                    # if (trail_sl - pos['sl_price']) / pos['sl_price'] > 0.002:
+
+                    # 🚀 修正/新增 3：大幅降低交易所止損單更新門檻 (0.2% 降到 0.05%)
+                    if (trail_sl - pos['sl_price']) / pos['sl_price'] > 0.0005:
                         sl_updated = True
                     # 本地端始終保持最新，隨時準備 IOC 平倉
                     pos['sl_price'] = trail_sl
@@ -270,18 +288,32 @@ def manage_long_positions():
 
             # 🚀 升級版：喚醒本地 Trail SL 攔截機制
             exit_reason = None
-            if curr_p >= pos['tp_price']:
-                exit_reason = "TP (IOC)"
-            elif curr_p <= pos['sl_price']:
-                # 如果已經解鎖保本，就叫佢 "Trail SL"，否則叫 "SL"
-                if pos['is_breakeven']:
-                    exit_reason = "Trail SL (IOC)"
-                else:
-                    exit_reason = "SL (IOC)"
 
+            # 🚀 修正/新增 2：新增「回撤鎖利」強制平倉機制 (Profit Retrace Lock)
+            profit_lock_threshold = t_cfg.get('profit_lock_threshold', 0.015)
+            profit_retrace_limit = t_cfg.get('profit_retrace_limit', 0.4)
+
+            if pos['max_pnl_pct'] > profit_lock_threshold:
+                if pnl_pct < (pos['max_pnl_pct'] * (1 - profit_retrace_limit)):
+                    exit_reason = "Profit Retrace Lock (IOC)"
+
+            # 只有當沒有觸發回撤保護時，才檢查常規的 TP/SL
+            if not exit_reason:
+                if curr_p >= pos['tp_price']:
+                    exit_reason = "TP (IOC)"
+                elif curr_p <= pos['sl_price']:
+                    # 如果已經解鎖保本，就叫佢 "Trail SL"，否則叫 "SL"
+                    if pos['is_breakeven']:
+                        exit_reason = "Trail SL (IOC)"
+                    else:
+                        exit_reason = "SL (IOC)"
 
             if exit_reason:
-                print(f"⚔️ Triggered {exit_reason}, Executing IOC Exit: {s}")
+                # ❌ 舊代碼保留
+                # print(f"⚔️ Triggered {exit_reason}, Executing IOC Exit: {s}")
+
+                # 🚀 修正/新增 5：優化 Log 輸出 (方便覆盤)
+                print(f"⚔️ Triggered {exit_reason}, Executing IOC Exit: {s} | Max PnL: {pos['max_pnl_pct'] * 100:.2f}%")
 
                 try:
                     try:
