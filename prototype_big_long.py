@@ -45,7 +45,7 @@ cooldown_tracker = {}
 # --- 基礎資金管理 ---
 WORKING_CAPITAL = 1000.0  # 運作本金上限
 MAX_LEVERAGE = 10.0  # 最大槓桿倍數
-RISK_PER_TRADE = 0.01  # 每筆交易風險比例 (1%)
+RISK_PER_TRADE = 0.015  # 每筆交易風險比例 (由 1% 加到 1.5%)
 MIN_NOTIONAL = 5.0  # 交易所最小名義價值要求
 
 # 🛡️ 防護網 1：單筆名義價值硬上限
