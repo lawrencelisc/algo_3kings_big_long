@@ -27,7 +27,7 @@ exchange.load_markets()
 
 # 檔案與路徑設定
 LOG_DIR = "result"
-STATUS_DIR = "../status"
+STATUS_DIR = "status"
 
 LOG_FILE = f"{LOG_DIR}/live_big_long_log.csv"
 STATUS_FILE = f"{STATUS_DIR}/btc_regime_big_long.csv"
@@ -194,7 +194,7 @@ def get_btc_regime():
     try:
         ohlcv = exchange.fetch_ohlcv('BTC/USDT:USDT', timeframe='15m', limit=150)
         df = pd.DataFrame(ohlcv, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
-        curr_p, curr_v = df['c'].iloc[-1], df['v'].iloc[-1]
+        curr_p = df['c'].iloc[-1]  # 🚀 刪除了會隨時間歸零的 curr_v
 
         # --- 1️⃣ 極速趨勢引擎：計算 HMA 20 與 HMA 50 ---
         def calc_hma(s, period):
@@ -212,6 +212,7 @@ def get_btc_regime():
         df['hma20'], df['hma50'] = calc_hma(df['c'], 20), calc_hma(df['c'], 50)
         hma20_val, hma50_val = df['hma20'].iloc[-1], df['hma50'].iloc[-1]
 
+        # 🟢 多軍 (Long) 邏輯：HMA20 大於 HMA50
         cond_trend = hma20_val > hma50_val
 
         # --- 2️⃣ 趨勢強度濾網：計算 ADX (14) ---
@@ -230,15 +231,18 @@ def get_btc_regime():
         adx_val = pd.Series(dx).ewm(alpha=1 / 14, adjust=False).mean().iloc[-1]
         cond_adx = adx_val > 22
 
-        # --- 3️⃣ 成交量濾網 (抗極端值優化版) ---
-        median_v_24 = df['v'].rolling(24).median().iloc[-1]
+        # --- 3️⃣ 成交量濾網 (抗極端值優化版 - 已修復未收盤陷阱) ---
+        # 🚀 改用「上一根已完整收盤」的 K 線 (-2)，避開當前 K 線歸零問題
+        completed_v = df['v'].iloc[-2]
+        # 🚀 計算過去 24 根「已收盤」K 線的中位數 (避開最後一根未完成的)
+        median_v_24 = df['v'].iloc[-25:-1].median()
         target_vol = median_v_24 * 0.8
-        cond_vol = curr_v > target_vol
+        cond_vol = completed_v > target_vol
 
         # --- 4️⃣ 整合訊號與輸出 ---
         tick_t = "✅" if cond_trend else "❌"
         tick_a = f"✅ (ADX: {adx_val:.1f})" if cond_adx else f"❌ (ADX: {adx_val:.1f})"
-        tick_v = f"✅ (Vol: {curr_v:.0f} > 目標:{target_vol:.0f})" if cond_vol else f"❌ (Vol: {curr_v:.0f} < 目標:{target_vol:.0f})"
+        tick_v = f"✅ (Vol: {completed_v:.0f} > 目標:{target_vol:.0f})" if cond_vol else f"❌ (Vol: {completed_v:.0f} < 目標:{target_vol:.0f})"
 
         if cond_trend and cond_adx and cond_vol:
             status, signal = "🟢 GREEN   (Trend, ADX & Vol Validated)", 1
@@ -257,7 +261,7 @@ def get_btc_regime():
         print(f"📊 BTC 實時戰報 (HMA+ADX+Vol版) | 現價: {curr_p:.0f}")
         print(f"1️⃣ 極速趨勢: HMA20({hma20_val:.0f}) > HMA50({hma50_val:.0f}) {tick_t}")
         print(f"2️⃣ 趨勢強度: ADX > 22 {tick_a}")
-        print(f"3️⃣ 動能確認: 當前量 > 24H中位數(80%) {tick_v}")
+        print(f"3️⃣ 動能確認: 上根已收盤量 > 24H中位數(80%) {tick_v}")
         print(f"🚦 最終決策: {status}")
         print("-" * 60)
 
@@ -292,8 +296,42 @@ def scouting_strong_coins(n=20):
         return []
 
 
+def check_flow_reversal(symbol):
+    """【防守專用】輕量級資金流反轉檢測 (防砸盤雷達)"""
+    try:
+        trades = exchange.fetch_trades(symbol, limit=100)
+        if not trades or len(trades) < 50: return False
+
+        df = pd.DataFrame(trades)
+        df['price_change'] = df['price'].diff()
+        df['direction'] = np.where(df['price_change'] > 0, 1, np.where(df['price_change'] < 0, -1, 0))
+        df['direction'] = df['direction'].replace(0, np.nan).ffill().fillna(0)
+
+        # 瞬時資金流 (加權)
+        avg_vol = df['amount'].mean()
+        df['weight'] = np.where(df['amount'] > avg_vol * 2, 2.0, 1.0)
+        df['net_flow'] = df['direction'] * df['amount'] * df['price'] * df['weight']
+
+        flow_mean = df['net_flow'].mean()
+        flow_std = df['net_flow'].std()
+
+        if flow_std == 0: return False
+
+        recent_25_flow = df['net_flow'].tail(25).sum()
+        z_score = (recent_25_flow - (flow_mean * 25)) / (flow_std * np.sqrt(25))
+
+        # 嚴格閾值：-3.0 Sigma 先斬，防假訊號
+        if z_score < -3.0:
+            print(f"🚨 {symbol} 偵測到極端砸盤資金流！Z-Score: {z_score:.2f}")
+            return True
+
+        return False
+    except Exception as e:
+        return False
+
+
 def apply_lee_ready_long_logic(symbol):
-    """正向 Lee-Ready 狙擊模式 (含大單加權、加速度與防砸盤陷阱)"""
+    """【進攻專用】正向 Lee-Ready 狙擊模式 (含大單加權、加速度與防砸盤陷阱)"""
     try:
         trades = exchange.fetch_trades(symbol, limit=200)
         if not trades: return 0, 0, False
@@ -378,9 +416,10 @@ def sync_positions_on_startup():
                 is_be = True if sl_p > entry_price else False
 
                 positions[symbol] = {
-                    'amount': amount, 'entry_price': entry_price, 'tp_price': tp_p, 'sl_price': sl_p,
-                    'is_breakeven': is_be, 'atr': atr, 'max_pnl_pct': 0.0
+                    'amount': actual_amount, 'entry_price': actual_price, 'tp_price': tp_p, 'sl_price': sl_p,
+                    'is_breakeven': False, 'atr': atr, 'max_pnl_pct': 0.0, 'entry_time': time.time()
                 }
+
                 recovered_count += 1
                 print(f"✅ 成功尋回孤兒多單: {symbol} | 入場價: {entry_price} | 已保本狀態: {is_be}")
 
@@ -454,6 +493,16 @@ def manage_long_positions():
                     logger.warning(f"⚠️ {s} 追蹤止損 API 更新失敗 (本地腦海仍保持最新): {e}")
 
             exit_reason = None
+            time_held = time.time() - pos.get('entry_time', time.time())
+
+            # 🚀 第 1 重防護：聰明時間止損 (持倉 > 3分鐘，利潤 < 0.5%)
+            if not exit_reason and time_held > 180 and pnl_pct < 0.005:
+                exit_reason = "Time Stop (Failed to ignite)"
+
+            # 🚀 第 2 重防護：資金流反轉檢測 (只在未保本且處於虧損時檢查，節省 API)
+            if not exit_reason and not pos['is_breakeven'] and pnl_pct < 0:
+                if check_flow_reversal(s):
+                    exit_reason = "Flow Reversal (Smart Exit)"
 
             # 常規本地 TP/SL 檢查 (由本地腦海判斷)
             if not exit_reason:
