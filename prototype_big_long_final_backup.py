@@ -55,7 +55,7 @@ MAX_NOTIONAL_PER_TRADE = 200.0
 NET_FLOW_SIGMA = 1.2                    # 資金流偏離度觸發門檻
 TP_ATR_MULT = 3.0                       # 止盈 ATR 倍數
 SL_ATR_MULT = 1.5                       # 初始止損 ATR 倍數
-TRAIL_ATR_MULT = 1.0                    # 追蹤止損 ATR 步進倍數
+TRAIL_ATR_MULT = 2.0                    # 追蹤止損 ATR 步進倍數 由 1.0 改為 2.0，避免被日常震倉掃走
 MIN_IMBALANCE_RATIO = 0.15              # 訂單簿失衡度門檻
 
 # --- 系統監控頻率 ---
@@ -63,8 +63,8 @@ SCOUTING_INTERVAL = 125                 # 海選掃描頻率 (秒)
 POSITION_CHECK_INTERVAL = 4             # 持倉巡邏頻率 (秒) - 4秒極速貼盤
 
 # 🛡️ 防護網 2：利潤回撤鎖利 (Profit Retrace Lock)
-PROFIT_LOCK_THRESHOLD = 0.010           # 啟動門檻：當利潤達到 1.0% 時啟動回撤保護
-PROFIT_RETRACE_LIMIT = 0.3              # 容忍回撤：利潤從最高點回落 30% 即觸發強制平倉
+PROFIT_LOCK_THRESHOLD = 0.008           # 啟動門檻：當利潤達到 1.0% 時啟動回撤保護 利潤達到 0.8% 就啟動回撤保護 (原本係 1.0%)
+PROFIT_RETRACE_LIMIT = 0.4              # 容忍回撤：利潤從最高點回落 30% 即觸發強制平倉 容忍回落 40% (例如最高賺 1%，跌返落 0.6% 就強制食糊)
 
 # --- 交易黑名單 (排除穩定幣與質押幣) ---
 BLACKLIST = [
@@ -197,7 +197,7 @@ def get_market_metrics(symbol):
 def get_btc_regime():
     """終極導航：HMA 交叉 + ADX 趨勢過濾 + 均量過濾"""
     try:
-        ohlcv = exchange.fetch_ohlcv('BTC/USDT:USDT', timeframe='1h', limit=150)
+        ohlcv = exchange.fetch_ohlcv('BTC/USDT:USDT', timeframe='15m', limit=150)
         df = pd.DataFrame(ohlcv, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
         curr_p, curr_v = df['c'].iloc[-1], df['v'].iloc[-1]
 
@@ -426,7 +426,8 @@ def manage_long_positions():
             # 追蹤最高利潤點
             if 'max_pnl_pct' not in pos: pos['max_pnl_pct'] = pnl_pct
             pos['max_pnl_pct'] = max(pos['max_pnl_pct'], pnl_pct)
-            if not pos['is_breakeven'] and pnl_pct > 0.003:
+            # 將 0.003 改為 0.01 (即 1%)
+            if not pos['is_breakeven'] and pnl_pct > 0.01:
                 pos['sl_price'], pos['is_breakeven'], sl_updated = pos['entry_price'] * 1.0015, True, True
 
             # 追蹤止損邏輯
