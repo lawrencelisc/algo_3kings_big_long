@@ -292,8 +292,42 @@ def scouting_strong_coins(n=20):
         return []
 
 
+def check_flow_reversal(symbol):
+    """【防守專用】輕量級資金流反轉檢測 (防砸盤雷達)"""
+    try:
+        trades = exchange.fetch_trades(symbol, limit=100)
+        if not trades or len(trades) < 50: return False
+
+        df = pd.DataFrame(trades)
+        df['price_change'] = df['price'].diff()
+        df['direction'] = np.where(df['price_change'] > 0, 1, np.where(df['price_change'] < 0, -1, 0))
+        df['direction'] = df['direction'].replace(0, np.nan).ffill().fillna(0)
+
+        # 瞬時資金流 (加權)
+        avg_vol = df['amount'].mean()
+        df['weight'] = np.where(df['amount'] > avg_vol * 2, 2.0, 1.0)
+        df['net_flow'] = df['direction'] * df['amount'] * df['price'] * df['weight']
+
+        flow_mean = df['net_flow'].mean()
+        flow_std = df['net_flow'].std()
+
+        if flow_std == 0: return False
+
+        recent_25_flow = df['net_flow'].tail(25).sum()
+        z_score = (recent_25_flow - (flow_mean * 25)) / (flow_std * np.sqrt(25))
+
+        # 嚴格閾值：-3.0 Sigma 先斬，防假訊號
+        if z_score < -3.0:
+            print(f"🚨 {symbol} 偵測到極端砸盤資金流！Z-Score: {z_score:.2f}")
+            return True
+
+        return False
+    except Exception as e:
+        return False
+
+
 def apply_lee_ready_long_logic(symbol):
-    """正向 Lee-Ready 狙擊模式 (含大單加權、加速度與防砸盤陷阱)"""
+    """【進攻專用】正向 Lee-Ready 狙擊模式 (含大單加權、加速度與防砸盤陷阱)"""
     try:
         trades = exchange.fetch_trades(symbol, limit=200)
         if not trades: return 0, 0, False
@@ -378,9 +412,10 @@ def sync_positions_on_startup():
                 is_be = True if sl_p > entry_price else False
 
                 positions[symbol] = {
-                    'amount': amount, 'entry_price': entry_price, 'tp_price': tp_p, 'sl_price': sl_p,
-                    'is_breakeven': is_be, 'atr': atr, 'max_pnl_pct': 0.0
+                    'amount': actual_amount, 'entry_price': actual_price, 'tp_price': tp_p, 'sl_price': sl_p,
+                    'is_breakeven': False, 'atr': atr, 'max_pnl_pct': 0.0, 'entry_time': time.time()
                 }
+
                 recovered_count += 1
                 print(f"✅ 成功尋回孤兒多單: {symbol} | 入場價: {entry_price} | 已保本狀態: {is_be}")
 
@@ -454,6 +489,16 @@ def manage_long_positions():
                     logger.warning(f"⚠️ {s} 追蹤止損 API 更新失敗 (本地腦海仍保持最新): {e}")
 
             exit_reason = None
+            time_held = time.time() - pos.get('entry_time', time.time())
+
+            # 🚀 第 1 重防護：聰明時間止損 (持倉 > 3分鐘，利潤 < 0.5%)
+            if not exit_reason and time_held > 180 and pnl_pct < 0.005:
+                exit_reason = "Time Stop (Failed to ignite)"
+
+            # 🚀 第 2 重防護：資金流反轉檢測 (只在未保本且處於虧損時檢查，節省 API)
+            if not exit_reason and not pos['is_breakeven'] and pnl_pct < 0:
+                if check_flow_reversal(s):
+                    exit_reason = "Flow Reversal (Smart Exit)"
 
             # 常規本地 TP/SL 檢查 (由本地腦海判斷)
             if not exit_reason:
