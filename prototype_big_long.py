@@ -45,7 +45,7 @@ cooldown_tracker = {}
 # --- 基礎資金管理 ---
 WORKING_CAPITAL = 1000.0  # 運作本金上限
 MAX_LEVERAGE = 10.0  # 最大槓桿倍數
-RISK_PER_TRADE = 0.015  # 每筆交易風險比例 (由 1% 加到 1.5%)
+RISK_PER_TRADE = 0.01  # 每筆交易風險比例 (1%)
 MIN_NOTIONAL = 5.0  # 交易所最小名義價值要求
 
 # 🛡️ 防護網 1：單筆名義價值硬上限
@@ -53,18 +53,13 @@ MAX_NOTIONAL_PER_TRADE = 200.0
 
 # --- 大幣專用設定 (專打流動性霸主) ---
 NET_FLOW_SIGMA = 1.2                    # 資金流偏離度觸發門檻
-TP_ATR_MULT = 3.0                       # 止盈 ATR 倍數
-SL_ATR_MULT = 1.5                       # 初始止損 ATR 倍數
-TRAIL_ATR_MULT = 1.0                    # 追蹤止損 ATR 步進倍數
+TP_ATR_MULT = 5.0                       # 止盈 ATR 倍數      🚀 變更：止盈放極闊 (由 3.0 改 5.0)，依賴風箏線自動收網！
+SL_ATR_MULT = 1.0                       # 初始止損 ATR 倍數   🚀 變更：初始止損收緊 (由 1.5 改 1.0)，見奸細即斬！
 MIN_IMBALANCE_RATIO = 0.15              # 訂單簿失衡度門檻
 
 # --- 系統監控頻率 ---
 SCOUTING_INTERVAL = 125                 # 海選掃描頻率 (秒)
 POSITION_CHECK_INTERVAL = 4             # 持倉巡邏頻率 (秒) - 4秒極速貼盤
-
-# 🛡️ 防護網 2：利潤回撤鎖利 (Profit Retrace Lock)
-PROFIT_LOCK_THRESHOLD = 0.010           # 啟動門檻：當利潤達到 1.0% 時啟動回撤保護
-PROFIT_RETRACE_LIMIT = 0.3              # 容忍回撤：利潤從最高點回落 30% 即觸發強制平倉
 
 # --- 交易黑名單 (排除穩定幣與質押幣) ---
 BLACKLIST = [
@@ -197,7 +192,7 @@ def get_market_metrics(symbol):
 def get_btc_regime():
     """終極導航：HMA 交叉 + ADX 趨勢過濾 + 均量過濾"""
     try:
-        ohlcv = exchange.fetch_ohlcv('BTC/USDT:USDT', timeframe='1h', limit=150)
+        ohlcv = exchange.fetch_ohlcv('BTC/USDT:USDT', timeframe='15m', limit=150)
         df = pd.DataFrame(ohlcv, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
         curr_p, curr_v = df['c'].iloc[-1], df['v'].iloc[-1]
 
@@ -405,8 +400,6 @@ def manage_long_positions():
         for s in list(positions.keys()):
             if s not in live_symbols:
                 print(f"🧹 交易所已自動平倉，處理真實 PnL 結算單: {s}")
-                # ❌ [Short 原版保留] real_pnl = process_native_exit_log(s, positions[s], position_type='short')
-                # 🚀 [Big Long 修改]
                 real_pnl = process_native_exit_log(s, positions[s], position_type='long')
                 cancel_all_v5(s)
 
@@ -421,17 +414,28 @@ def manage_long_positions():
             curr_p, pos = exchange.fetch_ticker(s)['last'], positions[s]
             pnl_pct = (curr_p - pos['entry_price']) / pos['entry_price']
 
+            # 🚀 動態核心：取得該幣種專屬波動率 (ATR 反推百分比)
+            coin_volatility_pct = pos['atr'] / pos['entry_price']
+
             sl_updated = False
 
             # 追蹤最高利潤點
             if 'max_pnl_pct' not in pos: pos['max_pnl_pct'] = pnl_pct
             pos['max_pnl_pct'] = max(pos['max_pnl_pct'], pnl_pct)
-            if not pos['is_breakeven'] and pnl_pct > 0.003:
-                pos['sl_price'], pos['is_breakeven'], sl_updated = pos['entry_price'] * 1.0015, True, True
 
-            # 追蹤止損邏輯
+            # 🚀 階段一 & 二：爬升期 -> 升幅超過 1.5 倍 ATR 才推保本 (容許妖幣初期震倉)
+            if not pos['is_breakeven'] and pnl_pct > (coin_volatility_pct * 1.5):
+                pos['sl_price'], pos['is_breakeven'], sl_updated = pos['entry_price'] * 1.002, True, True
+
+            # 🚀 階段三：三段式放風箏追蹤止損 (Trail SL)
             if pos['is_breakeven']:
-                trail_sl = curr_p - (TRAIL_ATR_MULT * pos['atr'])
+                # 暴漲期：如果利潤飆升超過 3 倍 ATR，風箏線立刻收緊 (1.0 ATR 距離跟貼，準備食糊)
+                if pnl_pct > (coin_volatility_pct * 3.0):
+                    trail_sl = curr_p - (1.0 * pos['atr'])
+                # 正常爬升期：風箏線放鬆 (2.0 ATR 距離，防日常震倉)
+                else:
+                    trail_sl = curr_p - (2.0 * pos['atr'])
+
                 if trail_sl > pos['sl_price']:
                     # 🛡️ 防護網 5：極限貼盤 (多單上移門檻 0.05%)
                     if (trail_sl - pos['sl_price']) / pos['sl_price'] > 0.0005:
@@ -451,12 +455,7 @@ def manage_long_positions():
 
             exit_reason = None
 
-            # 🛡️ 防護網 2：利潤回撤保護 (Profit Retrace Lock)
-            if pos['max_pnl_pct'] > PROFIT_LOCK_THRESHOLD:
-                if pnl_pct < (pos['max_pnl_pct'] * (1 - PROFIT_RETRACE_LIMIT)):
-                    exit_reason = "Profit Retrace Lock (Long IOC Exit)"
-
-            # 常規本地 TP/SL 檢查
+            # 常規本地 TP/SL 檢查 (由本地腦海判斷)
             if not exit_reason:
                 if curr_p >= pos['tp_price']:
                     exit_reason = "TP (Long IOC Exit)"
@@ -636,6 +635,7 @@ def main():
             print(f"\n👋 指揮官手動終止。餘額: {get_live_usdt_balance():.2f} USDT | 持倉: {list(positions.keys())}")
             sys.exit(0)
         except Exception as e:
+            logger.error(f"❌ 主迴圈發生未知錯誤: {e}")
             time.sleep(30 if "10006" in str(e) else 10)
 
 
