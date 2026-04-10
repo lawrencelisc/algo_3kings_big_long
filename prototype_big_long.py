@@ -54,7 +54,7 @@ MAX_NOTIONAL_PER_TRADE = 200.0
 # --- 大幣專用設定 (專打流動性霸主) ---
 NET_FLOW_SIGMA = 1.2                    # 資金流偏離度觸發門檻
 TP_ATR_MULT = 5.0                       # 止盈 ATR 倍數      🚀 變更：止盈放極闊 (由 3.0 改 5.0)，依賴風箏線自動收網！
-SL_ATR_MULT = 0.8                       # 初始止損 ATR 倍數   🚀 變更：初始止損收緊 (由 1.5 改 0.8)，見奸細即斬！
+SL_ATR_MULT = 1.5                       # 初始止損 ATR 倍數
 MIN_IMBALANCE_RATIO = 0.15              # 訂單簿失衡度門檻
 
 # --- 系統監控頻率 ---
@@ -462,25 +462,25 @@ def manage_long_positions():
             if 'max_pnl_pct' not in pos: pos['max_pnl_pct'] = pnl_pct
             pos['max_pnl_pct'] = max(pos['max_pnl_pct'], pnl_pct)
 
-            # 🚀 階段一 & 二：爬升期 -> 升幅超過 1.5 倍 ATR 才推保本 (容許妖幣初期震倉)
-            if not pos['is_breakeven'] and pnl_pct > (coin_volatility_pct * 1.5):
+            # 🚀 階段一 & 二：爬升期 -> 升幅超過 2.0 倍 ATR 才推保本 (數據顯示 1.5 太易被洗走)
+            if not pos['is_breakeven'] and pnl_pct > (coin_volatility_pct * 2.0):
+                # 鎖定 0.2% 利潤作為保本底線 (夠冚手續費有突)
                 pos['sl_price'], pos['is_breakeven'], sl_updated = pos['entry_price'] * 1.002, True, True
 
             # 🚀 階段三：三段式放風箏追蹤止損 (Trail SL)
             if pos['is_breakeven']:
-                # 暴漲期：如果利潤飆升超過 3 倍 ATR，風箏線立刻收緊 (1.0 ATR 距離跟貼，準備食糊)
-                if pnl_pct > (coin_volatility_pct * 3.0):
-                    trail_sl = curr_p - (1.0 * pos['atr'])
-                # 正常爬升期：風箏線放鬆 (2.0 ATR 距離，防日常震倉)
+                # 暴漲期：利潤飆升超過 3.5 倍 ATR (俾妖幣多啲空間衝)，風箏線收緊至 1.5 ATR 距離
+                if pnl_pct > (coin_volatility_pct * 3.5):
+                    trail_sl = curr_p - (1.5 * pos['atr'])
+                # 正常爬升期：風箏線放鬆至 2.0 ATR 距離，容許合理回調
                 else:
                     trail_sl = curr_p - (2.0 * pos['atr'])
 
                 if trail_sl > pos['sl_price']:
-                    # 🛡️ 防護網 5：極限貼盤 (多單上移門檻 0.05%)
+                    # 極限貼盤防護：多單上移門檻 0.05%
                     if (trail_sl - pos['sl_price']) / pos['sl_price'] > 0.0005:
                         sl_updated = True
                         pos['sl_price'] = trail_sl  # 本地腦海永遠維持最新
-
             # 發送更新到交易所
             if sl_updated:
                 f_sl = exchange.price_to_precision(s, pos['sl_price'])
@@ -496,7 +496,8 @@ def manage_long_positions():
             time_held = time.time() - pos.get('entry_time', time.time())
 
             # 🚀 第 1 重防護：聰明時間止損 (持倉 > 3分鐘，利潤 < 0.5%)
-            if not exit_reason and time_held > 180 and pnl_pct < 0.005:
+            # 數據顯示妖幣需要蘊釀時間，將 180 秒放寬至 300 秒，俾足夠耐性等佢點火
+            if not exit_reason and time_held > 300 and pnl_pct < 0.005:
                 exit_reason = "Time Stop (Failed to ignite)"
 
             # 🚀 第 2 重防護：資金流反轉檢測 (只在未保本且處於虧損時檢查，節省 API)
