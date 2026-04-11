@@ -382,7 +382,7 @@ def apply_lee_ready_long_logic(symbol):
         z_older = (flow_25_older / (std_val * np.sqrt(25))) if std_val > 0 else 0
 
         # 新鮮度要求：近端必須大於等於遠端的 80%
-        flow_is_fresh = z_recent >= (z_older * 0.8)
+        flow_is_fresh = z_recent >= (max(0, z_older) * 0.8)
 
         if (short_window_flow > 0) and (acceleration > 0) and (imbalance > 0.15):
             is_strong = True
