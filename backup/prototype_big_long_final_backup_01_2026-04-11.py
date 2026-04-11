@@ -14,8 +14,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger('AlgoTrade_Big_Long_V6.0')
 
 # Name: yamato
-API_KEY = "fpirpvJmwub1uAzqA4"
-API_SECRET = "9QQwKuZEg8e3YFKTYXSGj3MW9YBHlomeCrtJ"
+API_KEY = ""
+API_SECRET = ""
 
 exchange = ccxt.bybit({
     'apiKey': API_KEY,
