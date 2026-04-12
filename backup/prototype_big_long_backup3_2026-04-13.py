@@ -14,8 +14,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger('AlgoTrade_Long_V6.0')
 
 # ⚠️ API 金鑰配置 (請確保安全)
-API_KEY = "fpirpvJmwub1uAzqA4"
-API_SECRET = "9QQwKuZEg8e3YFKTYXSGj3MW9YBHlomeCrtJ"
+API_KEY = ""
+API_SECRET = ""
 
 exchange = ccxt.bybit({
     'apiKey': API_KEY,
@@ -27,7 +27,7 @@ exchange.load_markets()
 
 # 檔案與路徑設定
 LOG_DIR = "result"
-STATUS_DIR = "status"
+STATUS_DIR = "../status"
 LOG_FILE = f"{LOG_DIR}/live_long_log.csv"
 STATUS_FILE = f"{STATUS_DIR}/btc_regime_long.csv"
 
